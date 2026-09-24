@@ -33,3 +33,16 @@ url = { env = "TRANSCRIPTION_URL" }
 api_key = { env = "TRANSCRIPTION_API_KEY" }
 model = "large-v3-v20240930_626MB"
 language = "en"
+
+[mcp]
+enabled = true
+listen = "0.0.0.0:8080"
+allowed_hosts = ["call-recorder.syntropika.ai"]
+
+[mcp.auth]
+provider = "static_token"
+token = { env = "MCP_ACCESS_TOKEN" }
+# For OIDC, use provider = "oidc", issuer = { value = "https://auth.syntropika.ai/" },
+# audience = { value = "https://call-recorder.syntropika.ai/mcp" },
+# resource_url = { value = "https://call-recorder.syntropika.ai/mcp" },
+# scope = "transcripts:read", and remove token.

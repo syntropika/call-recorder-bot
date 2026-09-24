@@ -85,6 +85,7 @@ jobs:
           COOLIFY_ENV_S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
           COOLIFY_ENV_S3_SESSION_TOKEN: ${{ secrets.S3_SESSION_TOKEN }}
           COOLIFY_ENV_S3_ENDPOINT: ${{ secrets.S3_ENDPOINT || vars.S3_ENDPOINT }}
+          COOLIFY_ENV_MCP_ACCESS_TOKEN: ${{ secrets.MCP_ACCESS_TOKEN }}
         with:
           url: ${{ secrets.COOLIFY_URL || vars.COOLIFY_URL }}
           application-slug: call-recorder-bot
@@ -93,7 +94,7 @@ jobs:
           environment: production
           create-if-missing: 'true'
           application-file: deployment/coolify/application.json
-          required-env-keys: DISCORD_TOKEN,S3_ACCESS_KEY_ID,S3_SECRET_ACCESS_KEY,S3_ENDPOINT
+          required-env-keys: DISCORD_TOKEN,S3_ACCESS_KEY_ID,S3_SECRET_ACCESS_KEY,S3_ENDPOINT,MCP_ACCESS_TOKEN
           image-name: ghcr.io/${{ github.repository }}
           image-tag: ${{ github.sha }}
           read-token: ${{ secrets.COOLIFY_READ_TOKEN }}

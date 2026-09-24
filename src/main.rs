@@ -1,5 +1,6 @@
 mod cli_progress;
 mod engines;
+mod mcp;
 mod mixer;
 mod processing;
 mod recording;
@@ -151,5 +152,13 @@ async fn main() -> Result<()> {
             transcription_enabled,
         )),
     };
-    engine.run(recorder).await
+    if let Some(mcp_settings) = settings.mcp.as_ref().filter(|mcp| mcp.enabled) {
+        let mcp_server = mcp::start(mcp_settings, settings.s3()?).await?;
+        tokio::select! {
+            result = engine.run(recorder) => result,
+            result = mcp_server => result,
+        }
+    } else {
+        engine.run(recorder).await
+    }
 }

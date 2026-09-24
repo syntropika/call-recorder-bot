@@ -14,6 +14,7 @@ pub struct AppSettings {
     pub logging: LoggingSettings,
     pub storage: StorageSettings,
     pub transcription: TranscriptionSettings,
+    pub mcp: Option<McpSettings>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -87,6 +88,30 @@ pub struct TranscriptionSettings {
     pub api_key: Option<ValueSource>,
     pub model: String,
     pub language: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct McpSettings {
+    pub enabled: bool,
+    pub listen: String,
+    #[serde(default)]
+    pub allowed_hosts: Vec<String>,
+    pub auth: McpAuthSettings,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "provider", rename_all = "snake_case", deny_unknown_fields)]
+pub enum McpAuthSettings {
+    StaticToken {
+        token: ValueSource,
+    },
+    Oidc {
+        issuer: ValueSource,
+        audience: ValueSource,
+        resource_url: ValueSource,
+        scope: String,
+    },
 }
 
 #[derive(Deserialize)]
@@ -230,6 +255,40 @@ impl AppSettings {
                 .validate("storage.s3.secret_access_key")?;
             if let Some(session_token) = &s3.session_token {
                 session_token.validate("storage.s3.session_token")?;
+            }
+        }
+        if let Some(mcp) = &self.mcp {
+            mcp.listen
+                .parse::<std::net::SocketAddr>()
+                .context("mcp.listen must be a socket address")?;
+            if mcp.allowed_hosts.iter().any(|host| {
+                host.is_empty()
+                    || !host.bytes().all(|byte| {
+                        byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b':')
+                    })
+            }) {
+                bail!("mcp.allowed_hosts must contain only hostnames or host:port authorities");
+            }
+            match &mcp.auth {
+                McpAuthSettings::StaticToken { token } => {
+                    token.validate("mcp.auth.token")?;
+                }
+                McpAuthSettings::Oidc {
+                    issuer,
+                    audience,
+                    resource_url,
+                    scope,
+                } => {
+                    issuer.validate("mcp.auth.issuer")?;
+                    audience.validate("mcp.auth.audience")?;
+                    resource_url.validate("mcp.auth.resource_url")?;
+                    if scope.trim().is_empty() {
+                        bail!("mcp.auth.scope must not be empty");
+                    }
+                }
+            }
+            if mcp.enabled && self.storage.provider != StorageProvider::S3 {
+                bail!("MCP currently requires storage.provider = s3");
             }
         }
         Ok(())
@@ -390,5 +449,24 @@ mod tests {
             "token = { value = \"\" }",
         );
         assert!(AppSettings::parse(&config).is_err());
+    }
+
+    #[test]
+    fn mcp_static_mode_needs_no_public_url_and_oidc_accepts_one() -> Result<()> {
+        let settings = AppSettings::parse(include_str!("../config.toml"))?;
+        assert!(matches!(
+            settings.mcp.as_ref().map(|mcp| &mcp.auth),
+            Some(McpAuthSettings::StaticToken { .. })
+        ));
+        let oidc = include_str!("../config.toml").replace(
+            "provider = \"static_token\"\ntoken = { env = \"MCP_ACCESS_TOKEN\" }",
+            "provider = \"oidc\"\nissuer = { value = \"https://auth.example.com/\" }\naudience = { value = \"https://example.com/mcp\" }\nresource_url = { value = \"https://example.com/mcp\" }\nscope = \"transcripts:read\"",
+        );
+        let settings = AppSettings::parse(&oidc)?;
+        assert!(matches!(
+            settings.mcp.as_ref().map(|mcp| &mcp.auth),
+            Some(McpAuthSettings::Oidc { .. })
+        ));
+        Ok(())
     }
 }

@@ -26,5 +26,6 @@ COPY --from=builder /build/target/release/call-recorder-bot /usr/local/bin/call-
 COPY --chown=recorder:recorder --chmod=0644 config.toml ./config.toml
 
 USER recorder
+EXPOSE 8080
 STOPSIGNAL SIGTERM
 ENTRYPOINT ["/usr/local/bin/call-recorder-bot"]
