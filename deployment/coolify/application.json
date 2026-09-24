@@ -1,0 +1,25 @@
+{
+  "slug": "call-recorder-bot",
+  "project": "syntropika",
+  "server": "ovh1",
+  "environment": "production",
+  "create_if_missing": true,
+  "create": {
+    "autogenerate_domain": false,
+    "health_check_enabled": false,
+    "is_consistent_container_name_enabled": true,
+    "stop_grace_period": 300
+  },
+  "update": {
+    "domains": "",
+    "health_check_enabled": false,
+    "is_consistent_container_name_enabled": true,
+    "stop_grace_period": 300
+  },
+  "storages": [
+    {
+      "name": "call-recorder-bot-data",
+      "mount_path": "/app/data"
+    }
+  ]
+}
