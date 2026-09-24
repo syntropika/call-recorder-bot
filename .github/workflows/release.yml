@@ -15,13 +15,15 @@ concurrency:
 
 jobs:
   verify:
-    runs-on: ubuntu-latest
+    # Pull request code must not execute on a persistent runner.
+    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || '["self-hosted","linux","x64","docker"]') }}
+    container: rust:1.94-bookworm
     env:
       CARGO_BUILD_JOBS: "2"
     steps:
       - uses: actions/checkout@v4
       - name: Install native build dependencies
-        run: sudo apt-get update && sudo apt-get install -y cmake libopus-dev pkg-config
+        run: apt-get update && apt-get install -y cmake libopus-dev pkg-config
       - name: Install Rust toolchain
         run: rustup toolchain install 1.94.0 --profile minimal --component rustfmt --component clippy
       - name: Check formatting
@@ -34,7 +36,7 @@ jobs:
   publish:
     needs: verify
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, docker]
     permissions:
       contents: read
       packages: write
@@ -61,7 +63,7 @@ jobs:
 
   deploy:
     needs: publish
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, docker]
     timeout-minutes: 30
     steps:
       - name: Check Coolify configuration
@@ -88,7 +90,7 @@ jobs:
             exit 1
           fi
           umask 077
-          jq -n --arg domain "https://$MCP_PUBLIC_HOST" '{domains: $domain}' > "$RUNNER_TEMP/coolify-domain.json"
+          printf '{"domains":"https://%s"}\n' "$MCP_PUBLIC_HOST" > "$RUNNER_TEMP/coolify-domain.json"
       - name: Configure and deploy in Coolify
         if: steps.coolify.outputs.configured == 'true'
         uses: syntropika/actions/coolify-deploy@e8ae2d4f7aaf70b546c6bf39908075a0c83da5e4 # v1.3.0
