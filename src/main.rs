@@ -18,7 +18,7 @@ use anyhow::{Context as _, Result, anyhow};
 use engines::{CaptureEngine, discord::DiscordEngine};
 use processing::{NoopProcessor, RecordingProcessor, TranscribingProcessor};
 use recording::Recorder;
-use settings::{AppSettings, EngineProvider, SecretEnvSettings, StorageProvider};
+use settings::{AppSettings, EngineProvider, StorageProvider};
 use storage::{
     LocalWavStorage, RecordingArtifact, RecordingOrigin, RecordingStorage, S3ArchiveProcessor,
 };
@@ -47,12 +47,15 @@ async fn main() -> Result<()> {
         )
         .init();
     let args: Vec<String> = env::args().skip(1).collect();
-    let transcription_key =
-        SecretEnvSettings::optional(&settings.secrets.transcription_api_key_env);
+    let transcription_key = settings
+        .transcription
+        .api_key
+        .as_ref()
+        .and_then(|source| source.optional());
     let transcription_enabled = transcription_key.is_some();
     let transcriber = if let Some(key) = transcription_key {
         Some(Arc::new(OpenAiTranscriber::new(
-            settings.transcription.url.clone(),
+            settings.transcription.resolved_url()?,
             key,
             settings.transcription.model.clone(),
             settings.transcription.language.clone(),
@@ -63,12 +66,8 @@ async fn main() -> Result<()> {
     match args.as_slice() {
         [] => {}
         [flag, location] if flag == "--transcribe" => {
-            let transcriber = transcriber.with_context(|| {
-                format!(
-                    "{} is required for --transcribe",
-                    settings.secrets.transcription_api_key_env
-                )
-            })?;
+            let transcriber =
+                transcriber.context("transcription.api_key is required for --transcribe")?;
             let path = PathBuf::from(location);
             let recording_id = path
                 .file_stem()
@@ -108,19 +107,14 @@ async fn main() -> Result<()> {
                 .and_then(|folder| folder.file_name())
                 .and_then(|name| name.to_str())
                 .context("archive WAV must be in a room ID directory")?;
-            S3ArchiveProcessor::new(
-                settings.s3()?,
-                &settings.secrets,
-                Arc::new(NoopProcessor),
-                false,
-            )?
-            .on_completed(RecordingArtifact {
-                origin: recording_origin(&path, room_id)?,
-                recording_id,
-                location: location.clone(),
-                speaker_tracks: LocalWavStorage::load_speaker_tracks(&path)?,
-            })
-            .await?;
+            S3ArchiveProcessor::new(settings.s3()?, Arc::new(NoopProcessor), false)?
+                .on_completed(RecordingArtifact {
+                    origin: recording_origin(&path, room_id)?,
+                    recording_id,
+                    location: location.clone(),
+                    speaker_tracks: LocalWavStorage::load_speaker_tracks(&path)?,
+                })
+                .await?;
             return Ok(());
         }
         _ => {
@@ -141,7 +135,6 @@ async fn main() -> Result<()> {
                 data_dir.join("staging"),
                 Arc::new(S3ArchiveProcessor::new(
                     settings.s3()?,
-                    &settings.secrets,
                     transcription_processor,
                     true,
                 )?),
@@ -153,7 +146,7 @@ async fn main() -> Result<()> {
     ));
     let engine: Box<dyn CaptureEngine> = match settings.engine.provider {
         EngineProvider::Discord => Box::new(DiscordEngine::new(
-            SecretEnvSettings::required(&settings.secrets.discord_token_env)?,
+            settings.discord()?.token.required()?,
             data_dir,
             transcription_enabled,
         )),

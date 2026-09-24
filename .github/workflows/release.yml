@@ -61,28 +61,39 @@ jobs:
 
   deploy:
     needs: publish
-    if: vars.COOLIFY_URL != ''
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      - name: Check Coolify configuration
+        id: coolify
+        env:
+          COOLIFY_URL: ${{ secrets.COOLIFY_URL || vars.COOLIFY_URL }}
+        run: |
+          if [ -n "$COOLIFY_URL" ]; then
+            echo 'configured=true' >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/checkout@v4
+        if: steps.coolify.outputs.configured == 'true'
       - name: Configure and deploy in Coolify
+        if: steps.coolify.outputs.configured == 'true'
         uses: syntropika/actions/coolify-deploy@e8ae2d4f7aaf70b546c6bf39908075a0c83da5e4 # v1.3.0
         env:
           COOLIFY_ENV_DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
           COOLIFY_ENV_TRANSCRIPTION_API_KEY: ${{ secrets.TRANSCRIPTION_API_KEY }}
+          COOLIFY_ENV_TRANSCRIPTION_URL: ${{ secrets.TRANSCRIPTION_URL || vars.TRANSCRIPTION_URL }}
           COOLIFY_ENV_S3_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
           COOLIFY_ENV_S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
           COOLIFY_ENV_S3_SESSION_TOKEN: ${{ secrets.S3_SESSION_TOKEN }}
+          COOLIFY_ENV_S3_ENDPOINT: ${{ secrets.S3_ENDPOINT || vars.S3_ENDPOINT }}
         with:
-          url: ${{ vars.COOLIFY_URL }}
+          url: ${{ secrets.COOLIFY_URL || vars.COOLIFY_URL }}
           application-slug: call-recorder-bot
           project: syntropika
           server: ovh1
           environment: production
           create-if-missing: 'true'
           application-file: deployment/coolify/application.json
-          required-env-keys: DISCORD_TOKEN,S3_ACCESS_KEY_ID,S3_SECRET_ACCESS_KEY
+          required-env-keys: DISCORD_TOKEN,S3_ACCESS_KEY_ID,S3_SECRET_ACCESS_KEY,S3_ENDPOINT
           image-name: ghcr.io/${{ github.repository }}
           image-tag: ${{ github.sha }}
           read-token: ${{ secrets.COOLIFY_READ_TOKEN }}

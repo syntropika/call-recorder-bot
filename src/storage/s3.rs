@@ -13,11 +13,7 @@ use aws_sdk_s3::{
 };
 use tokio::io::AsyncReadExt;
 
-use crate::{
-    processing::RecordingProcessor,
-    recording_name,
-    settings::{S3Settings, SecretEnvSettings},
-};
+use crate::{processing::RecordingProcessor, recording_name, settings::S3Settings};
 
 use super::{RecordingArtifact, SpeakerTrack};
 
@@ -54,26 +50,28 @@ pub struct S3ArchiveProcessor {
 impl S3ArchiveProcessor {
     pub fn new(
         settings: &S3Settings,
-        secrets: &SecretEnvSettings,
         next: Arc<dyn RecordingProcessor>,
         remove_spool_on_success: bool,
     ) -> Result<Self> {
-        let access_key = SecretEnvSettings::required(&secrets.s3_access_key_id_env)?;
-        let secret_key = SecretEnvSettings::required(&secrets.s3_secret_access_key_env)?;
+        let access_key = settings.access_key_id.required()?;
+        let secret_key = settings.secret_access_key.required()?;
         let mut config = aws_sdk_s3::Config::builder()
             .behavior_version(BehaviorVersion::latest())
             .region(Region::new(settings.region.clone()))
             .credentials_provider(Credentials::new(
                 access_key,
                 secret_key,
-                SecretEnvSettings::optional(&secrets.s3_session_token_env),
+                settings
+                    .session_token
+                    .as_ref()
+                    .and_then(|source| source.optional()),
                 None,
                 "configured S3 credentials",
             ))
             .force_path_style(settings.force_path_style)
             .request_checksum_calculation(RequestChecksumCalculation::WhenRequired);
-        if let Some(endpoint) = &settings.endpoint {
-            config = config.endpoint_url(endpoint.clone());
+        if let Some(endpoint) = settings.resolved_endpoint()? {
+            config = config.endpoint_url(endpoint);
         }
         Ok(Self {
             client: Client::from_conf(config.build()),
