@@ -65,38 +65,19 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - name: Prepare runtime environment
-        env:
-          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
-          TRANSCRIPTION_API_KEY: ${{ secrets.TRANSCRIPTION_API_KEY }}
-          S3_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
-          S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
-          S3_SESSION_TOKEN: ${{ secrets.S3_SESSION_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          node --input-type=module <<'NODE'
-          import { writeFileSync } from 'node:fs';
-          import { join } from 'node:path';
-          for (const name of ['DISCORD_TOKEN', 'S3_ACCESS_KEY_ID', 'S3_SECRET_ACCESS_KEY']) {
-            if (!process.env[name]) throw new Error(`Set the ${name} GitHub Actions secret`);
-          }
-          writeFileSync(join(process.env.RUNNER_TEMP, 'coolify-env.json'), JSON.stringify({
-            DISCORD_TOKEN: process.env.DISCORD_TOKEN,
-            TRANSCRIPTION_API_KEY: process.env.TRANSCRIPTION_API_KEY || '',
-            S3_ACCESS_KEY_ID: process.env.S3_ACCESS_KEY_ID,
-            S3_SECRET_ACCESS_KEY: process.env.S3_SECRET_ACCESS_KEY,
-            S3_SESSION_TOKEN: process.env.S3_SESSION_TOKEN || '',
-          }), { mode: 0o600 });
-          NODE
-
       - name: Configure and deploy in Coolify
-        uses: syntropika/actions/coolify-deploy@04c3e7a3c3bd1576bd602bf3b1cabbdf9060f91a # v1.0.0
+        uses: syntropika/actions/coolify-deploy@21f83c57d16c6f7da8b9a276f64a4e7afcd3e5a4 # v1.1.0
+        env:
+          COOLIFY_ENV_DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+          COOLIFY_ENV_TRANSCRIPTION_API_KEY: ${{ secrets.TRANSCRIPTION_API_KEY }}
+          COOLIFY_ENV_S3_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
+          COOLIFY_ENV_S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
+          COOLIFY_ENV_S3_SESSION_TOKEN: ${{ secrets.S3_SESSION_TOKEN }}
         with:
           url: ${{ vars.COOLIFY_URL }}
           uuids: ${{ vars.COOLIFY_APP_UUID }}
           resource-type: application
-          env-file: ${{ runner.temp }}/coolify-env.json
+          required-env-keys: DISCORD_TOKEN,S3_ACCESS_KEY_ID,S3_SECRET_ACCESS_KEY
           image-name: ghcr.io/${{ github.repository }}
           image-tag: ${{ github.sha }}
           read-token: ${{ secrets.COOLIFY_READ_TOKEN }}
