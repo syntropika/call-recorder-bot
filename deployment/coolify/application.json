@@ -1,13 +1,18 @@
 {
   "create": {
     "autogenerate_domain": false,
-    "health_check_enabled": false,
+    "ports_exposes": "8080",
+    "health_check_enabled": true,
+    "health_check_path": "/healthz",
+    "health_check_port": "8080",
     "is_consistent_container_name_enabled": true,
     "stop_grace_period": 300
   },
   "update": {
-    "domains": "",
-    "health_check_enabled": false,
+    "ports_exposes": "8080",
+    "health_check_enabled": true,
+    "health_check_path": "/healthz",
+    "health_check_port": "8080",
     "is_consistent_container_name_enabled": true,
     "stop_grace_period": 300
   },

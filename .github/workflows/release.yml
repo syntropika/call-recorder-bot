@@ -78,6 +78,17 @@ jobs:
           fi
       - uses: actions/checkout@v4
         if: steps.coolify.outputs.configured == 'true'
+      - name: Prepare Coolify domain
+        if: steps.coolify.outputs.configured == 'true'
+        env:
+          MCP_PUBLIC_HOST: ${{ secrets.MCP_PUBLIC_HOST }}
+        run: |
+          if [[ ! "$MCP_PUBLIC_HOST" =~ ^[A-Za-z0-9.-]+$ ]]; then
+            echo 'Set MCP_PUBLIC_HOST to a hostname without a scheme or path'
+            exit 1
+          fi
+          umask 077
+          jq -n --arg domain "https://$MCP_PUBLIC_HOST" '{domains: $domain}' > "$RUNNER_TEMP/coolify-domain.json"
       - name: Configure and deploy in Coolify
         if: steps.coolify.outputs.configured == 'true'
         uses: syntropika/actions/coolify-deploy@e8ae2d4f7aaf70b546c6bf39908075a0c83da5e4 # v1.3.0
@@ -90,6 +101,8 @@ jobs:
           COOLIFY_ENV_S3_SESSION_TOKEN: ${{ secrets.S3_SESSION_TOKEN }}
           COOLIFY_ENV_S3_ENDPOINT: ${{ secrets.S3_ENDPOINT }}
           COOLIFY_ENV_S3_BUCKET: ${{ secrets.S3_BUCKET }}
+          COOLIFY_ENV_MCP_ACCESS_TOKEN: ${{ secrets.MCP_ACCESS_TOKEN }}
+          COOLIFY_ENV_MCP_PUBLIC_HOST: ${{ secrets.MCP_PUBLIC_HOST }}
         with:
           url: ${{ secrets.COOLIFY_URL }}
           application-slug: call-recorder-bot
@@ -98,7 +111,8 @@ jobs:
           environment: production
           create-if-missing: 'true'
           application-file: deployment/coolify/application.json
-          required-env-keys: DISCORD_TOKEN,S3_ACCESS_KEY_ID,S3_SECRET_ACCESS_KEY,S3_ENDPOINT,S3_BUCKET
+          patch-file: ${{ runner.temp }}/coolify-domain.json
+          required-env-keys: DISCORD_TOKEN,S3_ACCESS_KEY_ID,S3_SECRET_ACCESS_KEY,S3_ENDPOINT,S3_BUCKET,MCP_ACCESS_TOKEN,MCP_PUBLIC_HOST
           image-name: ghcr.io/${{ github.repository }}
           image-tag: ${{ github.sha }}
           read-token: ${{ secrets.COOLIFY_READ_TOKEN }}
