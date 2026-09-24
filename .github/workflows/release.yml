@@ -63,71 +63,42 @@ jobs:
     needs: publish
     if: vars.COOLIFY_APP_UUID != ''
     runs-on: ubuntu-latest
-    env:
-      COOLIFY_URL: ${{ vars.COOLIFY_URL }}
-      COOLIFY_APP_UUID: ${{ vars.COOLIFY_APP_UUID }}
-      COOLIFY_WRITE_TOKEN: ${{ secrets.COOLIFY_WRITE_TOKEN }}
-      COOLIFY_DEPLOY_TOKEN: ${{ secrets.COOLIFY_DEPLOY_TOKEN }}
-      DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
-      TRANSCRIPTION_API_KEY: ${{ secrets.TRANSCRIPTION_API_KEY }}
-      S3_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
-      S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
-      S3_SESSION_TOKEN: ${{ secrets.S3_SESSION_TOKEN }}
+    timeout-minutes: 30
     steps:
-      - name: Check deployment configuration
+      - name: Prepare runtime environment
+        env:
+          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+          TRANSCRIPTION_API_KEY: ${{ secrets.TRANSCRIPTION_API_KEY }}
+          S3_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
+          S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
+          S3_SESSION_TOKEN: ${{ secrets.S3_SESSION_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
-          : "${COOLIFY_URL:?Set the COOLIFY_URL repository variable}"
-          : "${COOLIFY_APP_UUID:?Set the COOLIFY_APP_UUID repository variable}"
-          : "${COOLIFY_WRITE_TOKEN:?Set the COOLIFY_WRITE_TOKEN secret}"
-          : "${COOLIFY_DEPLOY_TOKEN:?Set the COOLIFY_DEPLOY_TOKEN secret}"
-          : "${DISCORD_TOKEN:?Set the DISCORD_TOKEN secret}"
-          : "${S3_ACCESS_KEY_ID:?Set the S3_ACCESS_KEY_ID secret}"
-          : "${S3_SECRET_ACCESS_KEY:?Set the S3_SECRET_ACCESS_KEY secret}"
-          [[ "$COOLIFY_URL" == https://* ]] || { echo 'COOLIFY_URL must use HTTPS' >&2; exit 1; }
+          node --input-type=module <<'NODE'
+          import { writeFileSync } from 'node:fs';
+          import { join } from 'node:path';
+          for (const name of ['DISCORD_TOKEN', 'S3_ACCESS_KEY_ID', 'S3_SECRET_ACCESS_KEY']) {
+            if (!process.env[name]) throw new Error(`Set the ${name} GitHub Actions secret`);
+          }
+          writeFileSync(join(process.env.RUNNER_TEMP, 'coolify-env.json'), JSON.stringify({
+            DISCORD_TOKEN: process.env.DISCORD_TOKEN,
+            TRANSCRIPTION_API_KEY: process.env.TRANSCRIPTION_API_KEY || '',
+            S3_ACCESS_KEY_ID: process.env.S3_ACCESS_KEY_ID,
+            S3_SECRET_ACCESS_KEY: process.env.S3_SECRET_ACCESS_KEY,
+            S3_SESSION_TOKEN: process.env.S3_SESSION_TOKEN || '',
+          }), { mode: 0o600 });
+          NODE
 
-      - name: Sync runtime secrets to Coolify
-        shell: bash
-        run: |
-          set -euo pipefail
-          jq -n \
-            --arg discord "$DISCORD_TOKEN" \
-            --arg transcription "$TRANSCRIPTION_API_KEY" \
-            --arg s3_key "$S3_ACCESS_KEY_ID" \
-            --arg s3_secret "$S3_SECRET_ACCESS_KEY" \
-            --arg s3_session "$S3_SESSION_TOKEN" \
-            '{data: [
-              {key: "DISCORD_TOKEN", value: $discord},
-              {key: "TRANSCRIPTION_API_KEY", value: $transcription},
-              {key: "S3_ACCESS_KEY_ID", value: $s3_key},
-              {key: "S3_SECRET_ACCESS_KEY", value: $s3_secret},
-              {key: "S3_SESSION_TOKEN", value: $s3_session}
-            ] | map(. + {is_literal: true, is_shown_once: true, is_runtime: true, is_buildtime: false})}' |
-            curl --fail --silent --show-error --output /dev/null \
-              --request PATCH \
-              --header "Authorization: Bearer $COOLIFY_WRITE_TOKEN" \
-              --header 'Content-Type: application/json' \
-              --data-binary @- \
-              "${COOLIFY_URL%/}/api/v1/applications/$COOLIFY_APP_UUID/envs/bulk"
-
-      - name: Select the published image
-        shell: bash
-        run: |
-          set -euo pipefail
-          jq -n --arg tag "$GITHUB_SHA" '{docker_registry_image_tag: $tag}' |
-            curl --fail --silent --show-error --output /dev/null \
-              --request PATCH \
-              --header "Authorization: Bearer $COOLIFY_WRITE_TOKEN" \
-              --header 'Content-Type: application/json' \
-              --data-binary @- \
-              "${COOLIFY_URL%/}/api/v1/applications/$COOLIFY_APP_UUID"
-
-      - name: Deploy in Coolify
-        shell: bash
-        run: |
-          set -euo pipefail
-          curl --fail --silent --show-error --output /dev/null \
-            --request POST \
-            --header "Authorization: Bearer $COOLIFY_DEPLOY_TOKEN" \
-            "${COOLIFY_URL%/}/api/v1/deploy?uuid=$COOLIFY_APP_UUID"
+      - name: Configure and deploy in Coolify
+        uses: syntropika/actions/coolify-deploy@04c3e7a3c3bd1576bd602bf3b1cabbdf9060f91a # v1.0.0
+        with:
+          url: ${{ vars.COOLIFY_URL }}
+          uuids: ${{ vars.COOLIFY_APP_UUID }}
+          resource-type: application
+          env-file: ${{ runner.temp }}/coolify-env.json
+          image-name: ghcr.io/${{ github.repository }}
+          image-tag: ${{ github.sha }}
+          read-token: ${{ secrets.COOLIFY_READ_TOKEN }}
+          write-token: ${{ secrets.COOLIFY_WRITE_TOKEN }}
+          deploy-token: ${{ secrets.COOLIFY_DEPLOY_TOKEN }}
