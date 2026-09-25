@@ -66,21 +66,22 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Check Coolify configuration
-        id: coolify
         env:
           COOLIFY_URL: ${{ secrets.COOLIFY_URL }}
           COOLIFY_PROJECT: ${{ secrets.COOLIFY_PROJECT }}
           COOLIFY_SERVER: ${{ secrets.COOLIFY_SERVER }}
         run: |
-          if [ -n "$COOLIFY_URL" ]; then
-            test -n "$COOLIFY_PROJECT" || { echo 'Set COOLIFY_PROJECT in GitHub'; exit 1; }
-            test -n "$COOLIFY_SERVER" || { echo 'Set COOLIFY_SERVER in GitHub'; exit 1; }
-            echo 'configured=true' >> "$GITHUB_OUTPUT"
-          fi
+          test -n "$COOLIFY_URL" || { echo '::error::Set COOLIFY_URL in GitHub Actions secrets'; exit 1; }
+          test -n "$COOLIFY_PROJECT" || { echo '::error::Set COOLIFY_PROJECT in GitHub Actions secrets'; exit 1; }
+          test -n "$COOLIFY_SERVER" || { echo '::error::Set COOLIFY_SERVER in GitHub Actions secrets'; exit 1; }
+      - name: Check COOLIFY_TOKEN
+        env:
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+        run: |
+          test -n "$COOLIFY_TOKEN" || { echo '::error::Set COOLIFY_TOKEN in GitHub Actions secrets'; exit 1; }
+          echo 'COOLIFY_TOKEN is configured'
       - uses: actions/checkout@v4
-        if: steps.coolify.outputs.configured == 'true'
       - name: Prepare Coolify domain
-        if: steps.coolify.outputs.configured == 'true'
         env:
           MCP_PUBLIC_HOST: ${{ secrets.MCP_PUBLIC_HOST }}
         run: |
@@ -91,7 +92,6 @@ jobs:
           umask 077
           printf '{"domains":"https://%s"}\n' "$MCP_PUBLIC_HOST" > "$RUNNER_TEMP/coolify-domain.json"
       - name: Configure and deploy in Coolify
-        if: steps.coolify.outputs.configured == 'true'
         uses: syntropika/actions/coolify-deploy@e8ae2d4f7aaf70b546c6bf39908075a0c83da5e4 # v1.3.0
         env:
           COOLIFY_ENV_DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
@@ -116,6 +116,6 @@ jobs:
           required-env-keys: DISCORD_TOKEN,S3_ACCESS_KEY_ID,S3_SECRET_ACCESS_KEY,S3_ENDPOINT,S3_BUCKET,MCP_ACCESS_TOKEN,MCP_PUBLIC_HOST
           image-name: ghcr.io/${{ github.repository }}
           image-tag: ${{ github.sha }}
-          read-token: ${{ secrets.COOLIFY_READ_TOKEN }}
-          write-token: ${{ secrets.COOLIFY_WRITE_TOKEN }}
-          deploy-token: ${{ secrets.COOLIFY_DEPLOY_TOKEN }}
+          read-token: ${{ secrets.COOLIFY_TOKEN }}
+          write-token: ${{ secrets.COOLIFY_TOKEN }}
+          deploy-token: ${{ secrets.COOLIFY_TOKEN }}

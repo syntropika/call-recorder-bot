@@ -19,7 +19,7 @@ The verify job runs in a Rust container and installs the native Opus build depen
 ## Coolify setup
 
 1. Create a Coolify project, a `production` environment, and a server. Put their names in GitHub Actions secrets `COOLIFY_PROJECT` and `COOLIFY_SERVER`.
-2. Set `COOLIFY_URL` to the Coolify HTTPS base URL without `/api/v1`. The deploy job skips Coolify when this secret is absent. The deployment action creates the Docker Image application using slug `call-recorder-bot` when needed; no application UUID is required.
+2. Set `COOLIFY_URL` to the Coolify HTTPS base URL without `/api/v1`. The deploy job reports an error when this secret is absent. The deployment action creates the Docker Image application using slug `call-recorder-bot` when needed; no application UUID is required.
 3. Make the GHCR image public, or give the Coolify server a read-only GHCR package token for a private image.
 4. Set the application and Coolify secrets below, then run the workflow on `main`.
 
@@ -37,9 +37,9 @@ Set these in the repository's **Actions secrets**:
 | `MCP_PUBLIC_HOST` | Public MCP hostname without scheme or path |
 | `MCP_ACCESS_TOKEN` | Static Bearer token used by the checked-in config |
 | `COOLIFY_URL`, `COOLIFY_PROJECT`, `COOLIFY_SERVER` | Coolify target |
-| `COOLIFY_READ_TOKEN`, `COOLIFY_WRITE_TOKEN`, `COOLIFY_DEPLOY_TOKEN` | Coolify API access for the deployment action |
+| `COOLIFY_TOKEN` | Coolify API access for reading, configuring, and deploying the application |
 
-Set `TRANSCRIPTION_API_KEY` and `TRANSCRIPTION_URL` to enable transcription. `S3_SESSION_TOKEN` is only for temporary S3 credentials. The Coolify API tokens need read, write, and deploy permissions respectively; the read and write inputs can use one token if it has both permissions. Enable Coolify API access.
+Set `TRANSCRIPTION_API_KEY` and `TRANSCRIPTION_URL` to enable transcription. `S3_SESSION_TOKEN` is only for temporary S3 credentials. Create one Coolify API token with `root` permission for the team that owns the application and store it as `COOLIFY_TOKEN`. Coolify's `deploy` permission creates a deploy-only token, so a single token covering the action's read, write, and deploy operations needs `root`. Enable Coolify API access. The workflow's **Check COOLIFY_TOKEN** step reports whether the secret is configured without printing its value.
 
 The action receives these values through step environment variables and syncs them to Coolify at deploy time. They are not added to the image. It checks required runtime values before contacting Coolify and suppresses API response bodies because environment-variable responses can contain sensitive values. A container still needs valid S3 credentials, a bucket, and the configured MCP token to start successfully. Check the Coolify deployment log and then the bot log for the Discord connection.
 
