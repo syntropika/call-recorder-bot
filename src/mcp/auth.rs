@@ -25,7 +25,7 @@ pub struct OidcVerifier {
     jwks_url: reqwest::Url,
     keys: RwLock<JwkSet>,
     client: reqwest::Client,
-    last_refresh: tokio::sync::Mutex<Instant>,
+    last_refresh: tokio::sync::Mutex<Option<Instant>>,
 }
 
 #[derive(Deserialize)]
@@ -107,7 +107,7 @@ impl AuthAdapter {
                     jwks_url,
                     keys: RwLock::new(keys),
                     client,
-                    last_refresh: tokio::sync::Mutex::new(Instant::now()),
+                    last_refresh: tokio::sync::Mutex::new(None),
                 })))
             }
         }
@@ -166,28 +166,32 @@ impl OidcVerifier {
         let has_key = self.keys.read().is_ok_and(|keys| keys.find(&kid).is_some());
         if !has_key {
             let mut last_refresh = self.last_refresh.lock().await;
-            if last_refresh.elapsed() < Duration::from_secs(60) {
-                return false;
+            if !self.keys.read().is_ok_and(|keys| keys.find(&kid).is_some()) {
+                if last_refresh
+                    .as_ref()
+                    .is_some_and(|instant| instant.elapsed() < Duration::from_secs(60))
+                {
+                    return false;
+                }
+                *last_refresh = Some(Instant::now());
+                let refreshed: Result<JwkSet, _> = async {
+                    self.client
+                        .get(self.jwks_url.clone())
+                        .send()
+                        .await?
+                        .error_for_status()?
+                        .json()
+                        .await
+                }
+                .await;
+                let Ok(refreshed) = refreshed else {
+                    return false;
+                };
+                let Ok(mut keys) = self.keys.write() else {
+                    return false;
+                };
+                *keys = refreshed;
             }
-            *last_refresh = Instant::now();
-            drop(last_refresh);
-            let refreshed: Result<JwkSet, _> = async {
-                self.client
-                    .get(self.jwks_url.clone())
-                    .send()
-                    .await?
-                    .error_for_status()?
-                    .json()
-                    .await
-            }
-            .await;
-            let Ok(refreshed) = refreshed else {
-                return false;
-            };
-            let Ok(mut keys) = self.keys.write() else {
-                return false;
-            };
-            *keys = refreshed;
         }
         let Ok(keys) = self.keys.read() else {
             return false;
@@ -219,6 +223,7 @@ impl OidcVerifier {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[tokio::test]
     async fn rejects_short_public_bearer_keys() -> Result<()> {
@@ -226,6 +231,45 @@ mod tests {
             "provider = \"static_token\"\ntoken = { value = \"known-placeholder\" }",
         )?;
         assert!(AuthAdapter::new(&settings).await.is_err());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn refreshes_an_unknown_key_immediately_then_limits_retries() -> Result<()> {
+        let requests = Arc::new(AtomicUsize::new(0));
+        let app = axum::Router::new().route(
+            "/jwks",
+            axum::routing::get({
+                let requests = Arc::clone(&requests);
+                move || {
+                    let requests = Arc::clone(&requests);
+                    async move {
+                        requests.fetch_add(1, Ordering::SeqCst);
+                        axum::Json(serde_json::json!({ "keys": [] }))
+                    }
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let address = listener.local_addr()?;
+        let server = tokio::spawn(async move { axum::serve(listener, app).await });
+        let verifier = OidcVerifier {
+            issuer: "https://issuer.example.com/".into(),
+            resource_url: "https://transcripts.example.com/mcp".into(),
+            audience: "https://transcripts.example.com/mcp".into(),
+            scope: "transcripts:read".into(),
+            jwks_url: reqwest::Url::parse(&format!("http://{address}/jwks"))?,
+            keys: RwLock::new(JwkSet { keys: vec![] }),
+            client: reqwest::Client::new(),
+            last_refresh: tokio::sync::Mutex::new(None),
+        };
+        let token = "eyJhbGciOiJSUzI1NiIsImtpZCI6InJvdGF0ZWQifQ.e30.c2ln";
+
+        assert!(!verifier.verify(token).await);
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
+        assert!(!verifier.verify(token).await);
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
+        server.abort();
         Ok(())
     }
 }

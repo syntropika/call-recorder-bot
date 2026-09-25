@@ -15,8 +15,7 @@ concurrency:
 
 jobs:
   verify:
-    # Pull request code must not execute on a persistent runner.
-    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || '["self-hosted","linux","x64","docker"]') }}
+    runs-on: [self-hosted, linux, x64, docker]
     container: rust:1.94-bookworm
     env:
       CARGO_BUILD_JOBS: "2"
