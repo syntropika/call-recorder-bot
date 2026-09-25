@@ -19,3 +19,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 aws-sdk-s3 = { version = "=1.137.0", default-features = false, features = ["rustls", "default-https-client", "http-1x", "rt-tokio"] }
 toml = "1.1.6"
+axum = "0.8"
+rmcp = { version = "3.4.1", features = ["transport-streamable-http-server"] }
+schemars = "1"
+subtle = "2"
+jsonwebtoken = { version = "10.3.0", default-features = false, features = ["aws_lc_rs"] }

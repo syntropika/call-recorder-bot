@@ -1,67 +1,40 @@
-# call-recorder-bot
+# Call Recorder Bot
 
-A Rust bot for recording voice sessions, transcribing speakers, and archiving audio. Discord is the first capture engine, implemented with Serenity and Songbird. A server administrator selects a voice channel. By default, the bot posts recording notices in that voice channel's text chat; a different text or voice channel can be selected. When a person joins the selected voice channel, the bot posts a recording notice, joins, and records the mixed audio. When the last person leaves, it finalizes the WAV file and posts an end notice.
+**Turn Discord voice calls into speaker-labeled transcripts and recordings you control.**
 
-## Requirements
+Call Recorder Bot is a self-hosted Rust service that records a configured Discord voice channel, separates participants into source tracks, and can create a timestamped transcript with identified speakers. It archives audio and transcripts in your S3-compatible bucket, including Cloudflare R2. An authenticated MCP endpoint lets other services read the transcripts without making the bucket public.
 
-- Rust 1.94 (verified toolchain; the project uses Rust edition 2024).
-- The Opus development library, for example `sudo apt-get install libopus-dev` on Ubuntu. Songbird can also build Opus from source when CMake and a C toolchain are installed.
-- A Discord application with a bot token. Create one in the [Discord Developer Portal](https://discord.com/developers/applications).
-- A machine that stays online while recordings are needed. The bot runs locally on that machine; inviting it to a Discord server does not host the process.
+Discord is the first capture engine. The recording core has ports for other platforms, but Google Meet, Slack, and other engines are not implemented yet.
 
-## Install the bot in a Discord server
+## From call to archive
 
-1. In the Developer Portal, open your application and copy its bot token from the **Bot** page. Keep the token private.
-2. Configure **Guild Install** for your application and generate an installation link in the Developer Portal. Grant only **View Channels**, **Connect**, and **Send Messages** to the bot.
-3. Select the Discord server. Ensure the selected voice channel allows the bot to view, connect, and send messages in its text chat. If using a different notice channel, allow the bot to send messages there too. Channel permission overrides can deny these permissions even when they were granted at installation.
-4. Edit `config.toml` for public settings. Copy `.env.example` to `.env` and set the bot token, S3 bucket, endpoint, and access credentials. Set `TRANSCRIPTION_URL` when using `TRANSCRIPTION_API_KEY`. Run `cargo run --release` from this repository and keep the process running. Omit `TRANSCRIPTION_API_KEY` to record without transcription.
-5. In the Discord server, run `/record-setup voice:<voice channel>`. Notices will appear in that voice channel's text chat. The optional `notices` argument accepts another text or voice channel. The command requires **Manage Server** permission. Use `/record-status` to check the configuration and `/record-disable` to stop and disable it.
+1. A server administrator selects a voice channel with `/record-setup`.
+2. The bot posts a recording notice, joins when someone enters, and captures a mixed WAV plus separate source tracks.
+3. When the channel empties, it finalizes the files and, if configured, transcribes the tracks into one speaker-labeled timeline.
+4. It uploads the artifacts to S3-compatible storage and removes local staging files after successful processing. The MCP server can then list and read transcripts using authenticated tools.
 
-The bot uses the non-privileged `GUILDS` and `GUILD_VOICE_STATES` gateway intents. It does not read message content.
+The bot posts an end notice when it leaves. Failed processing leaves local files available for recovery. Transcripts are not posted to Discord.
 
-The application's **Public Key** is used to verify HTTP interaction requests. This bot receives interactions through Discord's Gateway, so it does not need the Public Key or an Interactions Endpoint URL. It still needs the **Bot Token** to run.
+## Start recording
 
-## Application configuration
+1. Create a Discord bot and an S3-compatible bucket. The checked-in configuration uses S3 storage and enables MCP.
+2. Copy `.env.example` to `.env` and set the Discord token, bucket, S3 credentials, endpoint, and an MCP Bearer token. A transcription API key is optional.
+3. Run `cargo run --release` on a machine that stays online.
+4. In your Discord server, run `/record-setup voice:<voice channel>`.
 
-`config.toml` holds application settings and sources for runtime values. The only implemented capture engine is `discord`. Its token is configured under `[engine.discord]`, S3 credentials under `[storage.s3]`, and the transcription API key under `[transcription]`. Every sourced field uses the same TOML form: `{ env = "NAME" }` reads an environment variable, while `{ value = "literal" }` uses a fixed value. Specify exactly one of `env` or `value`. The checked-in config uses environment references for credentials and service URLs; keep actual credentials out of Git. The bot loads `config.toml` from its working directory at startup. A relative `app.data_dir` is resolved from the config file's directory. Edit `config.toml` and restart the bot to apply changes. `logging.filter` uses the same filter syntax as Rust's `RUST_LOG` (for example, `info` or `call_recorder_bot=debug`).
+See [Getting started](docs/GETTING_STARTED.md) for permissions, native dependencies, and the full setup. Review your recording notice and consent requirements before enabling automatic capture.
 
-The ignored `.env` file holds local runtime values: `DISCORD_TOKEN`, `S3_BUCKET`, `S3_ENDPOINT`, S3 access credentials, and optionally `TRANSCRIPTION_API_KEY`, `TRANSCRIPTION_URL`, and `S3_SESSION_TOKEN`. For example, `endpoint = { env = "S3_ENDPOINT" }` reads the endpoint from `.env` or the process environment; `endpoint = { value = "https://s3.example.com" }` fixes it in TOML. The S3 endpoint variable is required when S3 storage or `--archive` is used. The transcription URL variable is required only when the API key is present. `DATA_DIR`, `RUST_LOG`, `STORAGE_BACKEND`, `S3_REGION`, `S3_PREFIX`, `S3_FORCE_PATH_STYLE`, `TRANSCRIPTION_MODEL`, and `TRANSCRIPTION_LANGUAGE` remain configured in `config.toml`; old environment values for those settings are ignored. Per-server voice and notice channel selections remain in `app.data_dir/config.json` and are managed by Discord commands.
+## Documentation
 
-## Deploy with GitHub Actions and Coolify
+| Guide | What it covers |
+| --- | --- |
+| [Getting started](docs/GETTING_STARTED.md) | Install the bot, run it, and choose a Discord channel |
+| [Configuration](docs/CONFIGURATION.md) | TOML settings, environment values, S3, and transcription |
+| [MCP access](docs/MCP.md) | Transcript tools, Bearer authentication, and optional OIDC |
+| [Deployment](docs/DEPLOYMENT.md) | Docker, GitHub Actions, and Coolify |
+| [Operations](docs/OPERATIONS.md) | Recording layout, privacy, cleanup, and recovery |
+| [Architecture](docs/ARCHITECTURE.md) | Capture engines, storage, and processing ports |
+| [Development](DEVELOP.md) | Build and test the Rust service |
+| [Contributing](CONTRIBUTING.md) | Propose and prepare changes |
 
-The `Dockerfile` builds a Linux image containing the bot and the checked-in `config.toml`. `.dockerignore` excludes local credentials, recordings, and build output from the Docker context. The GitHub Actions workflow verifies the Rust code, publishes `ghcr.io/<owner>/<repo>:<commit-sha>`, and deploys it when `COOLIFY_URL` is configured. Pull requests run verification without receiving deployment secrets.
-
-1. In Coolify, create a project, a `production` environment, and a server. Set `COOLIFY_PROJECT` and `COOLIFY_SERVER` as GitHub Actions secrets to their names. The [deployment workflow](.github/workflows/release.yml) uses these values and the `call-recorder-bot` application slug. The action creates the Docker Image application when missing. No application UUID is needed in GitHub.
-2. Make the GHCR package public, or authenticate the deployment server to GHCR with a read-only package token if the image remains private. [deployment/coolify/application.json](deployment/coolify/application.json) contains only application settings: the action creates or verifies the named `/app/data` persistent volume, disables the domain and HTTP health check, enables consistent container names, and sets a 300-second stop grace period. The volume holds per-server channel configuration and any recordings still being processed or retried. Ensure the container user (UID 10001) can write to it. Keep one instance of this bot running for a given Discord token and data volume.
-3. In GitHub repository **Actions secrets**, set `DISCORD_TOKEN`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `COOLIFY_READ_TOKEN`, `COOLIFY_WRITE_TOKEN`, and `COOLIFY_DEPLOY_TOKEN`. Optionally set `TRANSCRIPTION_API_KEY` and `S3_SESSION_TOKEN`. The Coolify tokens need `read`, `write`, and `deploy` permissions respectively. The read and write inputs may use the same token if it has both permissions. Coolify must have API access enabled. The secrets are supplied at container runtime and are never included in the image.
-4. In GitHub repository **Actions secrets**, set `COOLIFY_URL` to the HTTPS base URL of the Coolify instance (without `/api/v1`), `S3_BUCKET` to the bucket name, `S3_ENDPOINT` to the S3-compatible endpoint, and `TRANSCRIPTION_URL` to the transcription API URL if transcription is enabled. Run the workflow manually from `main` or push to `main`. The Coolify deployment action syncs these URLs and the runtime credentials to Coolify, selects the just-published commit SHA, deploys it, and waits for Coolify to report completion. Coolify retains runtime copies of the environment values because GitHub Actions values are unavailable to a container after the workflow ends.
-
-The workflow does not deploy until `COOLIFY_URL` exists. It passes GitHub runtime values directly to the action as prefixed step variables, without creating a plaintext environment file. It fails before touching Coolify if any required runtime value is missing. The action suppresses API response bodies because Coolify environment-variable responses may contain sensitive values. The app still needs a bucket and valid R2 object read/write credentials before it can start. Check the Coolify deployment log and then the bot log for a successful Discord connection.
-
-## Recordings and privacy
-
-With `storage.provider = "local"`, the bot writes a 48 kHz, 16-bit, mono mixed WAV to `<app.data_dir>/recordings/discord/<guild-id>/<recording-name>.wav` and source tracks to `<recording-name>.source-<source-id>.wav` in the same folder. New recording names use the UTC start time through seconds, such as `2026-09-24T21-35-08Z`; a second recording started in the same second receives a `-2` suffix. A private `<recording-name>.speakers.json` manifest maps tracks to participant IDs and labels and stores each track's offset from the start of the mixed recording. When transcription is configured, it saves a speaker-labeled transcript to `<recording-name>.txt`. Per-server channel configuration is stored in `<app.data_dir>/config.json`. These files are excluded from Git when using the default `data` directory. On Unix, the recording directories use mode `700` and audio, manifest, and transcript files use mode `600`. Files are finalized when a channel becomes empty or on normal shutdown (`Ctrl+C` or `SIGTERM`), and shutdown waits for in-progress transcription.
-
-### S3-compatible bucket storage
-
-The checked-in `config.toml` selects S3 and stores objects under the `recording` prefix; the bucket name comes from `S3_BUCKET`. Set `storage.provider = "s3"` and fill in `[storage.s3]` in `config.toml` for another bucket: `bucket`, `region`, `access_key_id`, `secret_access_key`, and optionally `endpoint`, `session_token`, `prefix`, and `force_path_style`. For Cloudflare R2, set `region = "auto"` and provide `S3_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com` through the environment, or use `endpoint = { value = "https://..." }` in TOML. Omit `endpoint` for AWS S3. `prefix` defaults to the bucket root and path-style addressing is enabled by default; set `force_path_style = false` if your provider requires virtual-hosted addressing. Put `S3_BUCKET`, `S3_ACCESS_KEY_ID`, and `S3_SECRET_ACCESS_KEY` in `.env`; `S3_SESSION_TOKEN` is optional for temporary credentials. Create the bucket and an object read/write API token before starting the bot. Keep the bucket private and credentials out of Git. Uploads use standard S3 operations, including multipart upload for large WAV files.
-
-The bot records to `<app.data_dir>/staging/discord/<guild-id>/` while a session is active. After it ends, it uploads the source tracks, a speaker manifest with `s3://` object locations, and the mixed WAV under `[prefix/]<recording-name>/discord/<guild-id>/<recording-name>.*`. Timestamp folders sort recordings by their full UTC start date and time. The WAV is uploaded last. If transcription is enabled, the bot transcribes from the local staging files and then uploads `<recording-name>.txt`. It removes the staged files after all steps succeed. Failed uploads or transcriptions leave the staged files in place for recovery; the error is logged. To retry an upload, run `cargo run -- --archive data/staging/discord/<guild-id>/<recording-name>.wav` with `[storage.s3]` configured. If transcription failed, first run `cargo run -- --transcribe` with that WAV path, then retry the archive. `--archive` leaves the local files in place so an operator can inspect them. Existing numeric recording filenames and the earlier directory layout are still accepted by both manual commands; existing files are not renamed. `<app.data_dir>/config.json` stays local, and enabling S3 does not migrate existing local recordings.
-
-The bot posts a public text notice before joining a voice channel and another notice after leaving. The notice states that separate source tracks are stored. When transcription is enabled, it also says the audio will be sent to an external provider. A failed start notice prevents recording. Tell participants about recording, speaker identification, and transcription, and obtain any consent required by your server rules and local law before enabling automatic recording. Protect and delete recordings and transcripts according to your retention policy. Transcripts are not posted to Discord. In S3 mode, they are saved in the configured bucket.
-
-## Ports and adapters
-
-`src/engines/mod.rs` defines the capture-engine interface. The Discord adapter in `src/engines/discord/` owns Discord commands, voice state, notices, Songbird, and its per-server channel configuration. `src/recording.rs` owns the platform-independent recording lifecycle: it receives PCM frames and source identities, writes tracks, finalizes a session, and dispatches post-recording processing. `src/main.rs` selects the configured engine and composes it with storage and processing. Recording metadata names its engine and stores room IDs, participant IDs, and participant labels without requiring Discord types. A new platform needs its own adapter and configuration; none is implemented yet.
-
-`src/storage/mod.rs` defines `RecordingStorage` and `RecordingWriter`. The adapter in `src/storage/local.rs` writes mixed and per-source WAV files locally. The S3 archive adapter in `src/storage/s3.rs` uploads finalized files while retaining a local working copy until processing completes. The Discord adapter maps each audio source from Songbird to a participant ID and a Discord mention. A source with no reliable mapping is labeled as unknown. Legacy manifests with `ssrc` and numeric `user_id` fields remain readable.
-
-`src/processing/mod.rs` defines `RecordingProcessor`. It receives a completed recording and its source tracks. When `TRANSCRIPTION_API_KEY` is set, `TranscribingProcessor` divides each source track into three-minute chunks, transcribes them, and orders the returned segments by time. A transcript header maps `Speaker 1`, `Speaker 2`, and so on to participant labels supplied by the capture engine; unmapped sources are identified by source ID. Lines use `[MM:SS] Speaker 1: text`. Recordings made before per-source capture retain an ordinary mixed transcript and cannot be assigned reliable participant IDs afterward. Processing runs separately from voice capture. The bot logs each chunk's start and completion; manual transcription reports completed chunks and displays a spinner in an interactive terminal.
-
-`src/transcription/mod.rs` defines the `Transcriber` port. `src/transcription/openai.rs` implements it with the OpenAI-compatible multipart API. Configure `[transcription].url` as `{ env = "TRANSCRIPTION_URL" }` or `{ value = "https://..." }`, plus `[transcription].model`, for another compatible service. `[transcription].api_key` uses the same source format and is optional; if its environment variable is absent, transcription is disabled. `[transcription].language` is `en` in the checked-in config because the configured conversations are in English; it sets the input language, not a translation task. The current model was confirmed through this provider's model catalog. Each chunk is sent with `model`, `language`, and WAV `file` fields and bearer authentication. Silent chunks are skipped. If an upload fails, the WAV remains available and the error is logged; no incomplete transcript is published.
-
-To transcribe or retry an existing local recording, run `cargo run -- --transcribe data/recordings/discord/<guild-id>/<recording-name>.wav`. This command reads a speaker manifest when present, saves a sibling `.txt` file, and exits without starting the Discord bot.
-
-## Verification
-
-Run `cargo test` and `cargo clippy --all-targets -- -D warnings`. A live Discord voice test needs a bot token and a test server.
+The project is designed for a single running bot instance per Discord token and data volume. Keep the S3 bucket private and set a retention policy that fits your use case.
