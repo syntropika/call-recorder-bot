@@ -92,7 +92,7 @@ jobs:
           umask 077
           printf '{"domains":"https://%s"}\n' "$MCP_PUBLIC_HOST" > "$RUNNER_TEMP/coolify-domain.json"
       - name: Configure and deploy in Coolify
-        uses: syntropika/actions/coolify-deploy@f9ca91ec8fad994b0f4e61ec015f1dc22148c982 # single-token input
+        uses: syntropika/actions/coolify-deploy@868bf8fea1e9454f2df9de95108359f0428e1ca4 # single-token and destination-name inputs
         env:
           COOLIFY_ENV_DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
           COOLIFY_ENV_TRANSCRIPTION_API_KEY: ${{ secrets.TRANSCRIPTION_API_KEY }}
@@ -109,6 +109,7 @@ jobs:
           application-slug: call-recorder-bot
           project: ${{ secrets.COOLIFY_PROJECT }}
           server: ${{ secrets.COOLIFY_SERVER }}
+          destination: coolify
           environment: production
           create-if-missing: 'true'
           application-file: deployment/coolify/application.json
