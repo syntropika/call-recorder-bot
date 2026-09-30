@@ -10,7 +10,7 @@ The [release workflow](../.github/workflows/release.yml) uses a self-hosted runn
 gh workflow run release.yml --ref <branch>
 ```
 
-Runs on a feature branch verify formatting, tests, and Clippy. Only runs on `main` publish and deploy. GitHub requires write access to dispatch a workflow manually.
+Runs on a feature branch verify formatting, tests, and Clippy. Only runs on `main` publish and deploy. Documentation-only pushes do not start the release workflow. GitHub requires write access to dispatch a workflow manually.
 
 Each job runs on a fresh, disposable runner container with a private Docker daemon and workspace.
 The Rust `container:` on the verify job is optional for runner isolation; it pins the Rust
