@@ -10,9 +10,14 @@ The [release workflow](../.github/workflows/release.yml) uses a self-hosted runn
 gh workflow run release.yml --ref <branch>
 ```
 
-Runs on a feature branch verify formatting, tests, and Clippy. Only runs on `main` publish and deploy. GitHub requires write access to dispatch a workflow manually.
+Runs on a feature branch verify formatting, tests, and Clippy. Only runs on `main` publish and deploy. Documentation-only pushes do not start the release workflow. GitHub requires write access to dispatch a workflow manually.
 
-Before allowing fork PR workflows on a public repository with a persistent self-hosted runner, select **Require approval for all external contributors** in **Settings → Actions → General**. GitHub's default first-time-contributor policy does not require approval for every external contributor. Review the proposed code and workflow changes before approving a run: approval permits that PR code to execute on the runner. Organization policy can also disable fork workflows on private repositories.
+Each job runs on a fresh, disposable runner container with a private Docker daemon and workspace.
+The Rust `container:` on the verify job is optional for runner isolation; it pins the Rust
+distribution and lets that job install `libopus-dev` without changing the runner image.
+The publish and deploy jobs already check out their own source and do not rely on files from verify.
+
+Before allowing fork PR workflows on a public repository with a privileged Docker-backed runner, select **Require approval for all external contributors** in **Settings → Actions → General**. GitHub's default first-time-contributor policy does not require approval for every external contributor. Review the proposed code and workflow changes before approving a run: approval permits that PR code to execute on the runner. Organization policy can also disable fork workflows on private repositories.
 
 The verify job runs in a Rust container and installs the native Opus build dependencies there. The publish job builds `ghcr.io/<owner>/<repo>:<commit-sha>`. The deploy job starts only after successful verification and publishing.
 
