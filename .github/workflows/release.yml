@@ -92,7 +92,7 @@ jobs:
           umask 077
           printf '{"domains":"https://%s"}\n' "$MCP_PUBLIC_HOST" > "$RUNNER_TEMP/coolify-domain.json"
       - name: Configure and deploy in Coolify
-        uses: syntropika/actions/coolify-deploy@868bf8fea1e9454f2df9de95108359f0428e1ca4 # single-token and destination-name inputs
+        uses: syntropika/actions/coolify-deploy@e15121464f35cdea477521dc13099a794338a844 # single token, named destination, and storage reuse
         env:
           COOLIFY_ENV_DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
           COOLIFY_ENV_TRANSCRIPTION_API_KEY: ${{ secrets.TRANSCRIPTION_API_KEY }}
