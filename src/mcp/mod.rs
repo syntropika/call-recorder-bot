@@ -253,6 +253,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn health_endpoint_does_not_require_bearer_token() -> Result<()> {
+        let auth = AuthAdapter::Static {
+            token: "expected-token".into(),
+        };
+        let app = router(auth, Arc::new(FakeStore), &[]);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let address = listener.local_addr()?;
+        let server = tokio::spawn(async move { axum::serve(listener, app).await });
+        let response = reqwest::get(format!("http://{address}/healthz")).await?;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.text().await?, "ok");
+        server.abort();
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn http_requires_bearer_and_serves_mcp_tools() -> Result<()> {
         let auth = AuthAdapter::Static {
             token: "expected-token".into(),
