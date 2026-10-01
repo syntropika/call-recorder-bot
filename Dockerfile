@@ -14,7 +14,7 @@ RUN cargo build --release --locked
 FROM debian:bookworm-slim
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates libopus0 \
+    && apt-get install -y --no-install-recommends ca-certificates curl libopus0 \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --user-group --uid 10001 \
         --home-dir /app --shell /usr/sbin/nologin recorder \
