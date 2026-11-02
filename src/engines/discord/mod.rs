@@ -1,7 +1,8 @@
 mod config;
+mod transcript;
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::PathBuf,
     sync::{
         Arc,
@@ -20,6 +21,7 @@ use serenity::{
         GatewayIntents, Guild, GuildId, Interaction, InteractionContext, Permissions, Ready,
     },
     async_trait,
+    cache::Cache,
     http::Http,
 };
 use songbird::{
@@ -58,13 +60,13 @@ struct App {
 }
 
 impl App {
-    async fn reconcile(&self, ctx: &Context, guild_id: GuildId) -> Result<()> {
+    async fn reconcile(&self, cache: &Cache, http: &Arc<Http>, guild_id: GuildId) -> Result<()> {
         let mut state = self.state.lock().await;
         if self.shutting_down.load(Ordering::Acquire) {
             return Ok(());
         }
         let configured = state.configs.get(&guild_id.get()).copied();
-        let people = configured.map(|cfg| count_people(ctx, guild_id, cfg.voice_channel_id));
+        let people = configured.map(|cfg| count_people(cache, guild_id, cfg.voice_channel_id));
 
         let should_stop = state.sessions.get(&guild_id.get()).is_some_and(|session| {
             configured.is_none_or(|cfg| {
@@ -73,15 +75,32 @@ impl App {
             }) || people == Some(Some(0))
         });
         if should_stop {
-            self.stop_session(&ctx.http, guild_id, &mut state).await;
+            self.stop_session(http, guild_id, &mut state).await;
+        }
+
+        // A failed disconnect or gateway reconnect can outlive the recording session.
+        // Keep reconciling the voice connection until Discord confirms the bot has left.
+        if !should_stop && (configured.is_none() || people == Some(Some(0))) {
+            let connected = cache.guild(guild_id).is_some_and(|guild| {
+                guild
+                    .voice_states
+                    .get(&cache.current_user().id)
+                    .is_some_and(|voice| voice.channel_id.is_some())
+            });
+            if connected || self.manager.get(guild_id).is_some() {
+                self.manager.get_or_insert(guild_id);
+                self.manager
+                    .remove(guild_id)
+                    .await
+                    .context("could not disconnect an idle voice connection")?;
+            }
         }
 
         if let (Some(cfg), Some(count)) = (configured, people.flatten())
             && count > 0
             && !state.sessions.contains_key(&guild_id.get())
         {
-            self.start_session(&ctx.http, guild_id, cfg, &mut state)
-                .await?;
+            self.start_session(http, guild_id, cfg, &mut state).await?;
         }
         Ok(())
     }
@@ -105,7 +124,7 @@ impl App {
                     "🔴 Recording started in <#{}>. Everyone in that voice channel is being recorded. Separate speaker tracks are stored.{}",
                     cfg.voice_channel_id,
                     if self.transcription_enabled {
-                        " The audio will be sent to a transcription provider after recording ends."
+                        " The audio will be sent to a transcription provider after recording ends, and the completed transcript will be posted in this channel."
                     } else {
                         ""
                     }
@@ -153,7 +172,7 @@ impl App {
         Ok(())
     }
 
-    async fn stop_session(&self, http: &Http, guild_id: GuildId, state: &mut State) {
+    async fn stop_session(&self, http: &Arc<Http>, guild_id: GuildId, state: &mut State) {
         let Some(session) = state.sessions.remove(&guild_id.get()) else {
             return;
         };
@@ -161,7 +180,16 @@ impl App {
         if let Err(err) = self.manager.remove(guild_id).await {
             warn!(guild = guild_id.get(), %err, "could not leave voice channel");
         }
-        self.recorder.finish(session.recording).await;
+        self.recorder
+            .finish(
+                session.recording,
+                Some(Arc::new(transcript::DiscordTranscriptDelivery::new(
+                    http.clone(),
+                    ChannelId::new(session.notice_channel_id),
+                    ChannelId::new(session.channel_id),
+                ))),
+            )
+            .await;
         if let Err(err) = ChannelId::new(session.notice_channel_id)
             .say(
                 http,
@@ -173,7 +201,7 @@ impl App {
         }
     }
 
-    async fn shutdown(&self, http: &Http) {
+    async fn shutdown(&self, http: &Arc<Http>) {
         self.shutting_down.store(true, Ordering::Release);
         let mut state = self.state.lock().await;
         let guilds: Vec<_> = state.sessions.keys().copied().collect();
@@ -186,9 +214,9 @@ impl App {
     }
 }
 
-fn count_people(ctx: &Context, guild_id: GuildId, voice_channel_id: u64) -> Option<usize> {
-    let guild = ctx.cache.guild(guild_id)?;
-    let own_id = ctx.cache.current_user().id;
+fn count_people(cache: &Cache, guild_id: GuildId, voice_channel_id: u64) -> Option<usize> {
+    let guild = cache.guild(guild_id)?;
+    let own_id = cache.current_user().id;
     Some(
         guild
             .voice_states
@@ -210,7 +238,7 @@ fn count_people(ctx: &Context, guild_id: GuildId, voice_channel_id: u64) -> Opti
                             .get(&voice.user_id)
                             .map(|member| member.user.bot)
                     })
-                    .or_else(|| ctx.cache.user(voice.user_id).map(|user| user.bot))
+                    .or_else(|| cache.user(voice.user_id).map(|user| user.bot))
                     .unwrap_or(false)
             })
             .count(),
@@ -279,12 +307,22 @@ impl EventHandler for Handler {
                 let mut timer = tokio::time::interval(Duration::from_secs(30));
                 loop {
                     timer.tick().await;
-                    let guilds: Vec<u64> = {
+                    let guilds: HashSet<u64> = {
                         let state = app.state.lock().await;
-                        state.configs.keys().copied().collect()
+                        state
+                            .configs
+                            .keys()
+                            .chain(state.sessions.keys())
+                            .copied()
+                            .chain(app.manager.iter().map(|(guild, _)| guild.0.get()))
+                            .chain(ctx.cache.guilds().into_iter().map(|guild| guild.get()))
+                            .collect()
                     };
                     for guild in guilds {
-                        if let Err(err) = app.reconcile(&ctx, GuildId::new(guild)).await {
+                        if let Err(err) = app
+                            .reconcile(&ctx.cache, &ctx.http, GuildId::new(guild))
+                            .await
+                        {
                             warn!(guild, %err, "could not reconcile recording state");
                         }
                     }
@@ -294,7 +332,7 @@ impl EventHandler for Handler {
     }
 
     async fn guild_create(&self, ctx: Context, guild: Guild, _is_new: Option<bool>) {
-        if let Err(err) = self.app.reconcile(&ctx, guild.id).await {
+        if let Err(err) = self.app.reconcile(&ctx.cache, &ctx.http, guild.id).await {
             warn!(guild = guild.id.get(), %err, "could not reconcile recording state");
         }
     }
@@ -306,7 +344,7 @@ impl EventHandler for Handler {
         new: serenity::all::VoiceState,
     ) {
         if let Some(guild_id) = new.guild_id
-            && let Err(err) = self.app.reconcile(&ctx, guild_id).await
+            && let Err(err) = self.app.reconcile(&ctx.cache, &ctx.http, guild_id).await
         {
             warn!(guild = guild_id.get(), %err, "could not reconcile recording state");
         }
@@ -343,7 +381,7 @@ fn commands() -> Vec<CreateCommand> {
                 CreateCommandOption::new(
                     CommandOptionType::Channel,
                     "notices",
-                    "Optional text or voice channel for notices; defaults to the voice channel",
+                    "Channel for notices and transcripts; defaults to the voice channel",
                 )
                 .channel_types(vec![ChannelType::Text, ChannelType::Voice]),
             ),
@@ -405,8 +443,8 @@ async fn handle_command(app: &App, ctx: &Context, command: &CommandInteraction) 
                 config::save(&app.data_dir.join("config.json"), &updated).await?;
                 state.configs = updated;
             }
-            respond(ctx, command, &format!("Automatic recording configured for <#{}>. Recording notices will appear in <#{}>.", voice.get(), notices.get())).await?;
-            if let Err(err) = app.reconcile(ctx, guild_id).await {
+            respond(ctx, command, &format!("Automatic recording configured for <#{}>. Recording notices and completed transcripts will appear in <#{}>.", voice.get(), notices.get())).await?;
+            if let Err(err) = app.reconcile(&ctx.cache, &ctx.http, guild_id).await {
                 warn!(guild = guild_id.get(), %err, "configuration saved, but recording could not start");
                 command.create_followup(
                     &ctx.http,
@@ -425,7 +463,7 @@ async fn handle_command(app: &App, ctx: &Context, command: &CommandInteraction) 
                 state.configs = updated;
             }
             respond(ctx, command, "Automatic recording disabled.").await?;
-            app.reconcile(ctx, guild_id).await?;
+            app.reconcile(&ctx.cache, &ctx.http, guild_id).await?;
         }
         "record-status" => {
             let state = app.state.lock().await;
@@ -543,3 +581,6 @@ async fn termination_signal() {
 async fn termination_signal() {
     std::future::pending::<()>().await;
 }
+
+#[cfg(test)]
+mod tests;

@@ -6,7 +6,7 @@ One Rust process hosts the capture engine, recording pipeline, S3 archive, and t
 
 `src/engines/mod.rs` defines the capture-engine interface. `src/engines/discord/` implements Discord commands, voice-state handling, notices, Songbird audio capture, and per-server channel settings. The adapter maps each audio source to a participant ID and Discord mention when possible. Sources without a reliable mapping receive an unknown label.
 
-`src/recording.rs` owns the platform-independent lifecycle: it receives PCM frames and source identities, writes individual tracks and a mixed recording, finalizes the session, and sends completed files to processing. Metadata records an engine name, room ID, participant IDs, and labels without depending on Discord types. `src/main.rs` selects the configured engine and connects it to storage and processing.
+`src/recording.rs` owns the platform-independent lifecycle: it receives PCM frames and source identities, writes individual tracks and a mixed recording, finalizes the session, and sends completed files to processing. Metadata records an engine name, room ID, participant IDs, and labels without depending on Discord types. Processing returns the completed transcript to an optional delivery port. The Discord adapter captures the destination channel per session and posts the text after processing and archival, even if staging files have already been removed. Shutdown waits for these deliveries along with transcription. `src/main.rs` selects the configured engine and connects it to storage and processing.
 
 Only Discord is implemented. Another platform needs its own capture adapter and configuration; the shared recorder should not need platform-specific types.
 

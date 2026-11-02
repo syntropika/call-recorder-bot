@@ -219,12 +219,12 @@ impl S3ArchiveProcessor {
 
 #[async_trait]
 impl RecordingProcessor for S3ArchiveProcessor {
-    async fn on_completed(&self, artifact: RecordingArtifact) -> Result<()> {
+    async fn on_completed(&self, artifact: RecordingArtifact) -> Result<Option<String>> {
         if artifact.recording_id == 0 || artifact.origin.room_id.is_empty() {
             bail!("S3 archival requires a recording ID and room ID");
         }
         self.archive_audio(&artifact).await?;
-        self.next.on_completed(artifact.clone()).await?;
+        let transcript_text = self.next.on_completed(artifact.clone()).await?;
         let transcript = Path::new(&artifact.location).with_extension("txt");
         if tokio::fs::try_exists(&transcript).await? {
             let transcript_key = self.key(&artifact, "txt")?;
@@ -236,7 +236,7 @@ impl RecordingProcessor for S3ArchiveProcessor {
         {
             tracing::warn!(%err, location = %artifact.location, "could not remove archived local spool");
         }
-        Ok(())
+        Ok(transcript_text)
     }
 }
 
@@ -262,6 +262,73 @@ mod tests {
             "recording/2026-09-24T21-35-08Z/discord/42/2026-09-24T21-35-08Z.wav"
         );
         assert!(first_key < second_key);
+        Ok(())
+    }
+
+    struct StubTranscript;
+
+    #[async_trait]
+    impl RecordingProcessor for StubTranscript {
+        async fn on_completed(&self, artifact: RecordingArtifact) -> Result<Option<String>> {
+            let text = "[00:01] Speaker 1: Hello".to_owned();
+            tokio::fs::write(Path::new(&artifact.location).with_extension("txt"), &text).await?;
+            Ok(Some(text))
+        }
+    }
+
+    #[tokio::test]
+    async fn archived_transcript_is_available_for_delivery_after_spool_cleanup() -> Result<()> {
+        use crate::storage::{LocalWavStorage, RecordingStorage};
+        use axum::{Router, body::Bytes, extract::State, http::Uri, routing::put};
+        use std::time::{SystemTime, UNIX_EPOCH};
+        use tokio::sync::mpsc;
+
+        async fn capture(
+            State(sender): State<mpsc::UnboundedSender<(String, Vec<u8>)>>,
+            uri: Uri,
+            body: Bytes,
+        ) {
+            sender.send((uri.path().to_owned(), body.to_vec())).unwrap();
+        }
+        let (sender, mut receiver) = mpsc::unbounded_channel();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let address = listener.local_addr()?;
+        let router = Router::new()
+            .route("/{*key}", put(capture))
+            .with_state(sender);
+        let server = tokio::spawn(async move { axum::serve(listener, router).await });
+        let settings: S3Settings = serde_json::from_value(serde_json::json!({
+            "bucket": {"value":"test-bucket"}, "region":"auto",
+            "endpoint":{"value":format!("http://{address}")},
+            "access_key_id":{"value":"test-access"},
+            "secret_access_key":{"value":"test-secret"}, "prefix":"recording"
+        }))?;
+        let root = std::env::temp_dir().join(format!(
+            "call-recorder-archive-delivery-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+        ));
+        let storage = LocalWavStorage::new(root.clone());
+        let mut writer = storage.start(
+            RecordingOrigin::new("discord", "42")?,
+            1_790_259_308_000_000_000,
+        )?;
+        writer.write_tick(&[123; 960], &[])?;
+        let artifact = writer.finish()?;
+        let processor = S3ArchiveProcessor::new(&settings, Arc::new(StubTranscript), true)?;
+        let text = processor.on_completed(artifact.clone()).await?;
+        assert_eq!(text.as_deref(), Some("[00:01] Speaker 1: Hello"));
+        assert!(!tokio::fs::try_exists(&artifact.location).await?);
+        assert!(!tokio::fs::try_exists(Path::new(&artifact.location).with_extension("txt")).await?);
+        let mut uploads = Vec::new();
+        while let Ok(upload) = receiver.try_recv() {
+            uploads.push(upload);
+        }
+        assert!(uploads.iter().any(
+            |(key, bytes)| key.ends_with(".txt") && bytes == text.as_ref().unwrap().as_bytes()
+        ));
+        server.abort();
+        tokio::fs::remove_dir_all(root).await?;
         Ok(())
     }
 }

@@ -1,6 +1,6 @@
 # Recording operations
 
-The bot starts recording when someone joins the configured voice channel and finalizes a session when the channel becomes empty. It also finalizes active files on a normal shutdown (`Ctrl+C` or `SIGTERM`) and waits for in-progress transcription.
+The bot starts recording when someone joins the configured voice channel. When the last human participant leaves, the bot disconnects and finalizes the session. Other bots do not keep a session open. Periodic reconciliation also retries disconnects and clears a voice connection left without an active recording. It also finalizes active files on a normal shutdown (`Ctrl+C` or `SIGTERM`) and waits for in-progress transcription.
 
 ## Files and names
 
@@ -43,8 +43,14 @@ cargo run -- --archive data/staging/discord/<guild-id>/<recording-name>.wav
 
 If transcription previously failed, transcribe the WAV first and then archive it. `--archive` keeps local files in place for inspection. The WAV must be inside a room-ID directory and have a timestamp or legacy recording-ID name.
 
+## Discord transcript delivery
+
+After processing succeeds, the bot sends the completed transcript as a `.txt` attachment to the notice channel selected when the recording started. The default is the recorded voice channel's text chat. Changing `/record-setup` while a transcript is processing does not redirect that transcript to another channel. The bot needs **View Channels**, **Send Messages**, and **Attach Files** in the destination.
+
+With S3 storage, delivery occurs after the transcript is archived. Delivery uses the completed text in memory, so local staging cleanup does not remove the attachment before it is sent. Large transcripts are split into numbered UTF-8 attachments of at most 8 MiB. If transcription or archival fails, no completed transcript is posted. If Discord delivery fails, the error is logged and the transcript remains available in storage; delivery is not retried automatically.
+
 ## Privacy and retention
 
 Before joining, the bot posts a public notice that separate source tracks are stored. If transcription is enabled, the notice says audio will be sent to an external provider. A failed start notice prevents recording. The bot posts an end notice after leaving. Inform participants about recording, speaker identification, and transcription, and obtain any consent required by your server rules and local law.
 
-Transcripts are not posted to Discord. In S3 mode they are stored in the configured bucket and can be read through the authenticated [MCP endpoint](MCP.md). Protect and delete audio, manifests, and transcripts according to your retention policy. Keep the bucket private.
+Completed transcripts are posted to the configured notice channel and are visible to members who can read that channel. In S3 mode they are also stored in the configured bucket and can be read through the authenticated [MCP endpoint](MCP.md). Protect and delete audio, manifests, and transcripts according to your retention policy. Keep the bucket private.
