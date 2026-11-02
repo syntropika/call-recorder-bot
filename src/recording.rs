@@ -7,6 +7,7 @@ use std::{
 };
 
 use anyhow::Result;
+use async_trait::async_trait;
 use tokio::{
     sync::{Mutex, mpsc},
     task::JoinHandle,
@@ -87,6 +88,12 @@ impl ActiveRecording {
     }
 }
 
+/// Delivers a completed transcript after processing and archival have succeeded.
+#[async_trait]
+pub trait TranscriptDelivery: Send + Sync {
+    async fn deliver(&self, artifact: &RecordingArtifact, transcript: String) -> Result<()>;
+}
+
 /// Owns recording files and post-recording work independently of a capture engine.
 pub struct Recorder {
     storage: Arc<dyn RecordingStorage>,
@@ -143,7 +150,11 @@ impl Recorder {
         }
     }
 
-    pub async fn finish(&self, recording: ActiveRecording) {
+    pub async fn finish(
+        &self,
+        recording: ActiveRecording,
+        delivery: Option<Arc<dyn TranscriptDelivery>>,
+    ) {
         recording.sink.deactivate();
         let _ = recording.sink.sender.send(AudioMessage::Finish).await;
         match recording.writer.await {
@@ -151,8 +162,16 @@ impl Recorder {
                 info!(engine = %artifact.origin.engine, room = %artifact.origin.room_id, recording = artifact.recording_id, location = %artifact.location, "recording finalized");
                 let processor = self.processor.clone();
                 let task = tokio::spawn(async move {
-                    if let Err(err) = processor.on_completed(artifact).await {
-                        error!(%err, "post-recording processing failed");
+                    match processor.on_completed(artifact.clone()).await {
+                        Ok(Some(transcript)) => {
+                            if let Some(delivery) = delivery
+                                && let Err(err) = delivery.deliver(&artifact, transcript).await
+                            {
+                                error!(%err, engine = %artifact.origin.engine, room = %artifact.origin.room_id, recording = artifact.recording_id, "transcript delivery failed; completed files remain in storage");
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(err) => error!(%err, "post-recording processing failed"),
                     }
                 });
                 let mut tasks = self.processing_tasks.lock().await;
@@ -193,9 +212,9 @@ mod tests {
 
     #[async_trait]
     impl RecordingProcessor for CaptureProcessor {
-        async fn on_completed(&self, artifact: RecordingArtifact) -> Result<()> {
+        async fn on_completed(&self, artifact: RecordingArtifact) -> Result<Option<String>> {
             self.0.send(artifact)?;
-            Ok(())
+            Ok(None)
         }
     }
 
@@ -215,7 +234,7 @@ mod tests {
         let sink = session.sink();
         sink.capture(vec![123; 960], vec![(7, vec![123; 960])]);
         sink.identify(7, "person-99".into(), "Alex".into()).await;
-        recorder.finish(session).await;
+        recorder.finish(session, None).await;
         recorder.wait_for_processing().await;
         let artifact = receiver
             .recv()
@@ -230,6 +249,68 @@ mod tests {
         assert!(artifact.location.contains("/meet/room-a/"));
         assert_eq!(hound::WavReader::open(&artifact.location)?.duration(), 960);
         tokio::fs::remove_dir_all(root).await?;
+        Ok(())
+    }
+
+    struct CompletedProcessor {
+        fail: bool,
+    }
+
+    #[async_trait]
+    impl RecordingProcessor for CompletedProcessor {
+        async fn on_completed(&self, artifact: RecordingArtifact) -> Result<Option<String>> {
+            if self.fail {
+                anyhow::bail!("transcription failed");
+            }
+            tokio::fs::remove_file(&artifact.location).await?;
+            Ok(Some("[00:01] Speaker 1: Hello".into()))
+        }
+    }
+
+    struct CaptureDelivery(mpsc::UnboundedSender<String>);
+
+    #[async_trait]
+    impl TranscriptDelivery for CaptureDelivery {
+        async fn deliver(&self, artifact: &RecordingArtifact, transcript: String) -> Result<()> {
+            assert!(!tokio::fs::try_exists(&artifact.location).await?);
+            self.0.send(transcript)?;
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn delivers_completed_text_after_cleanup_and_skips_failed_processing() -> Result<()> {
+        for fail in [false, true] {
+            let root = std::env::temp_dir().join(format!(
+                "call-recorder-delivery-{}-{}-{fail}",
+                std::process::id(),
+                SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+            ));
+            let (sender, mut receiver) = mpsc::unbounded_channel();
+            let recorder = Recorder::new(
+                Arc::new(LocalWavStorage::new(root.clone())),
+                Arc::new(CompletedProcessor { fail }),
+            );
+            let session = recorder.start(RecordingOrigin::new("test", "room-a")?)?;
+            session.sink().capture(vec![123; 960], Vec::new());
+            recorder
+                .finish(session, Some(Arc::new(CaptureDelivery(sender))))
+                .await;
+            recorder.wait_for_processing().await;
+            if fail {
+                assert!(receiver.try_recv().is_err());
+                assert!(std::fs::read_dir(root.join("test/room-a"))?.any(|entry| {
+                    entry
+                        .unwrap()
+                        .path()
+                        .extension()
+                        .is_some_and(|ext| ext == "wav")
+                }));
+            } else {
+                assert_eq!(receiver.try_recv()?, "[00:01] Speaker 1: Hello");
+            }
+            tokio::fs::remove_dir_all(root).await?;
+        }
         Ok(())
     }
 }

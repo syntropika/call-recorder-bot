@@ -9,18 +9,18 @@ use tokio::sync::mpsc;
 
 use crate::{storage::RecordingArtifact, transcription::Transcriber};
 
-/// Port for work that begins only after a recording has been finalized.
+/// Processes a finalized recording and returns its completed transcript, when enabled.
 #[async_trait]
 pub trait RecordingProcessor: Send + Sync {
-    async fn on_completed(&self, artifact: RecordingArtifact) -> Result<()>;
+    async fn on_completed(&self, artifact: RecordingArtifact) -> Result<Option<String>>;
 }
 
 pub struct NoopProcessor;
 
 #[async_trait]
 impl RecordingProcessor for NoopProcessor {
-    async fn on_completed(&self, _artifact: RecordingArtifact) -> Result<()> {
-        Ok(())
+    async fn on_completed(&self, _artifact: RecordingArtifact) -> Result<Option<String>> {
+        Ok(None)
     }
 }
 
@@ -65,7 +65,7 @@ const CHUNK_SECONDS: u32 = 180;
 
 #[async_trait]
 impl RecordingProcessor for TranscribingProcessor {
-    async fn on_completed(&self, artifact: RecordingArtifact) -> Result<()> {
+    async fn on_completed(&self, artifact: RecordingArtifact) -> Result<Option<String>> {
         let path = Path::new(&artifact.location);
         let labeled = !artifact.speaker_tracks.is_empty();
         let mut inputs = Vec::new();
@@ -197,7 +197,7 @@ impl RecordingProcessor for TranscribingProcessor {
         };
         let output = path.with_extension("txt");
         let partial = path.with_extension("txt.partial");
-        tokio::fs::write(&partial, transcript)
+        tokio::fs::write(&partial, &transcript)
             .await
             .context("could not write transcript")?;
         #[cfg(unix)]
@@ -206,7 +206,7 @@ impl RecordingProcessor for TranscribingProcessor {
             .await
             .context("could not finalize transcript")?;
         tracing::info!(engine = %artifact.origin.engine, room = %artifact.origin.room_id, recording = artifact.recording_id, path = %output.display(), "transcript saved");
-        Ok(())
+        Ok(Some(transcript))
     }
 }
 

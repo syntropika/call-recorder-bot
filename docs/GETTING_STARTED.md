@@ -15,8 +15,8 @@ See [Development](../DEVELOP.md) for build commands and [Configuration](CONFIGUR
 ## Invite the bot
 
 1. In the Developer Portal, copy the token from the application's **Bot** page and keep it private.
-2. Configure **Guild Install** and generate an install link for your application. Grant **View Channels**, **Connect**, and **Send Messages**.
-3. Install it in the Discord server. Check channel overrides: the bot must be able to view and connect to the selected voice channel and send messages in its text chat. If you use another notice channel, grant **Send Messages** there too.
+2. Configure **Guild Install** and generate an install link for your application. Grant **View Channels**, **Connect**, **Send Messages**, and **Attach Files**.
+3. Install it in the Discord server. Check channel overrides: the bot must be able to view and connect to the selected voice channel and send messages in its text chat. If you use another notice channel, grant **View Channels**, **Send Messages**, and **Attach Files** there too.
 
 The bot uses the non-privileged `GUILDS` and `GUILD_VOICE_STATES` gateway intents. It does not read message content. It receives commands through Discord's Gateway, so the application's Public Key and an Interactions Endpoint URL are not needed. The bot token is still required.
 
@@ -40,6 +40,6 @@ Run this command in the Discord server as a member with **Manage Server** permis
 /record-setup voice:<voice channel>
 ```
 
-The bot posts notices in the voice channel's text chat by default. The optional `notices` argument selects another text or voice channel. Use `/record-status` to inspect the setup and `/record-disable` to stop automatic recording.
+The bot posts notices and completed transcript attachments in the voice channel's text chat by default. The optional `notices` argument selects another text or voice channel. Use `/record-status` to inspect the setup and `/record-disable` to stop automatic recording.
 
 Before enabling automatic capture, tell participants about recording, separate speaker tracks, and transcription. The bot posts a notice before joining and an end notice after leaving. A failed start notice prevents recording. Follow your server rules and applicable consent requirements. [Operations](OPERATIONS.md) explains where recordings are kept and how failed jobs are recovered.

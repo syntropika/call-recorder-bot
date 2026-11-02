@@ -11,9 +11,9 @@ Discord is the first capture engine. The recording core has ports for other plat
 1. A server administrator selects a voice channel with `/record-setup`.
 2. The bot posts a recording notice, joins when someone enters, and captures a mixed WAV plus separate source tracks.
 3. When the channel empties, it finalizes the files and, if configured, transcribes the tracks into one speaker-labeled timeline.
-4. It uploads the artifacts to S3-compatible storage and removes local staging files after successful processing. The MCP server can then list and read transcripts using authenticated tools.
+4. It uploads the artifacts to S3-compatible storage, removes local staging files after successful processing, and posts the completed transcript as a text attachment in the configured notice channel. The MCP server can also list and read archived transcripts using authenticated tools.
 
-The bot posts an end notice when it leaves. Failed processing leaves local files available for recovery. Transcripts are not posted to Discord.
+The bot posts an end notice when it leaves. Failed processing leaves local files available for recovery. Completed transcripts are posted in the configured notice channel; audio remains in storage.
 
 ## Start recording
 
